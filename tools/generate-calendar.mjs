@@ -1,9 +1,10 @@
 // Gera src/Infrastructure.Data/Calendar/saints.json uma única vez.
-// Uso: node tools/read-cancaonova-calendar.mjs, node tools/generate-calendar.mjs
-// e node tools/enrich-life-veneration.mjs, nesta ordem.
+// Uso: node tools/read-cancaonova-calendar.mjs, node tools/generate-calendar.mjs,
+// node tools/enrich-summary.mjs e node tools/enrich-life-veneration.mjs, nesta ordem.
 // O pedido do dia, na API, não consulta nenhuma destas fontes.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { firstSentence, tidy, withoutLanguageNotes } from './intro-text.mjs'
 import { USER_AGENT, chunk, getJson, sleep } from './wikimedia.mjs'
 
 const OUTPUT = new URL('../src/Infrastructure.Data/Calendar/saints.json', import.meta.url)
@@ -30,8 +31,6 @@ const RETIRED_CALENDARS = new Set(['Q7883976', 'Q5532158', 'Q1142865', 'Q35032']
 const WESTERN_RELIGIONS = new Set(['Q9592', 'Q1841', 'Q7361618', 'Q597526', 'Q842798'])
 const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp']
 const CANDIDATES_PER_DAY = 5
-const ABBREVIATIONS = new Set(['c', 'ca', 'cf', 'd', 'dr', 'fl', 'fr', 'm', 'n', 'pe', 's', 'sec', 'séc', 'sr', 'sra', 'st', 'sta', 'sto'])
-const NON_LATIN = /[\u0250-\u02AF\u0370-\u03FF\u0400-\u04FF\u0530-\u058F\u0590-\u05FF\u0600-\u06FF\u0700-\u074F\u10A0-\u10FF\u1200-\u137F\u2C80-\u2CFF]/
 
 const WIKIPEDIA_SOURCE = {
   name: 'Wikipédia',
@@ -520,46 +519,6 @@ function sentenceOf(extract) {
   const text = firstSentence(tidy(withoutLanguageNotes(paragraph)))
   if (!text) return null
   return { text, adapted: text !== original }
-}
-
-function firstSentence(text) {
-  let depth = 0
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index]
-    if (char === '(' || char === '[') depth += 1
-    else if ((char === ')' || char === ']') && depth > 0) depth -= 1
-    else if (depth === 0 && '.!?'.includes(char)) {
-      const rest = text.slice(index + 1)
-      if (rest !== '' && !/^\s+["“«(]?[A-ZÀ-Ý]/.test(rest)) continue
-      const word = (/(\S+)$/.exec(text.slice(0, index))?.[1] ?? '').replace(/^\(/, '')
-      if (/^[A-ZÀ-Ý]$/.test(word) || word.includes('.') || ABBREVIATIONS.has(word.toLowerCase())) continue
-      return text.slice(0, index + 1).trim()
-    }
-  }
-  return ''
-}
-
-function withoutLanguageNotes(text) {
-  let current = text
-  for (let pass = 0; pass < 5; pass += 1) {
-    const next = current.replace(/\s*\(([^()]*)\)/g, (group, inner) => (isLanguageNote(inner) ? '' : group))
-    if (next === current) break
-    current = next
-  }
-  return current
-}
-
-function isLanguageNote(inner) {
-  if (NON_LATIN.test(inner)) return true
-  return /\bem [a-zà-ú ]+:|romaniz\.|^\s*(gueês|grego|latim|hebraico|árabe|siríaco|copta|armênio|georgiano)\b/i.test(inner)
-}
-
-function tidy(text) {
-  return text
-    .replace(/\(\s*[;,]?\s*\)/g, '')
-    .replace(/\s+([,.;:])/g, '$1')
-    .replace(/\s+/g, ' ')
-    .trim()
 }
 
 async function feastRows() {

@@ -1,7 +1,7 @@
 // Acrescenta vida e veneração a cada dia de saints.json.
 // Vida: Wikidata (CC0). Veneração: infobox do artigo da Wikipédia em português (CC BY-SA 4.0),
-// com a Wikidata no lugar do que a infobox não tiver, exceto o padroado.
-// Uso: node tools/enrich-life-veneration.mjs, depois de generate-calendar.mjs.
+// com a Wikidata no lugar do que a infobox não tiver, exceto o padroado. Quem canonizou vem só da Wikidata.
+// Uso: node tools/enrich-life-veneration.mjs, depois de generate-calendar.mjs e enrich-summary.mjs.
 // Pode rodar de novo: troca os blocos antigos pelos novos e mantém o resto do dia.
 
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -13,12 +13,27 @@ const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'jul
 const SAINT_STATUS = new Set(['Q43115', 'Q3464126', 'Q123110154', 'Q18344276'])
 const CATHOLIC_STATUS = new Set(['Q3464126', 'Q123110154', 'Q18344276'])
 const PRE_CONGREGATION = 'Q18344276'
+const BLESSED = 'Q2369287'
 const GENERAL_ROMAN_CALENDAR = new Set(['Q13012667', 'Q98782022'])
 const CATHOLIC_RELIGIONS = new Set(['Q9592', 'Q1841', 'Q7361618', 'Q597526', 'Q842798'])
 const CIRCA = 'Q5727902'
 const CHRISTIAN_CHURCH = /igreja|comunhão|cristandade|cristianismo|catolicismo|católic|ortodox|anglican|luteran|copta|maronit|armêni/i
 const FIRST_CANONIZATION_YEAR = 993
 const MAX_FIELD_LENGTH = 160
+const ENGLISH_LABEL = /\b(of|the|and|church|order|abbey|cathedral|cemetery|chapel|monastery)\b/i
+const ITEM_ID = /^Q\d+$/
+const INFOBOX_FIELDS = [
+  'venerado_em',
+  'veneração',
+  'data_beatificação',
+  'beatificação',
+  'data_canonização',
+  'canonização',
+  'patrono',
+  'padroeiro',
+  'atribuições',
+  'atributos',
+]
 
 const WIKIDATA_FACTS = {
   name: 'Wikidata',
@@ -49,11 +64,16 @@ async function main() {
 
   writeFileSync(CALENDAR, JSON.stringify(file, null, 2) + '\n', 'utf8')
   console.log(`dias: ${file.days.length}; com item na Wikidata: ${ids.size}; com vida: ${withLife}; com veneração além da festa: ${withVeneration}`)
+  const count = (block, field) => file.days.filter((saint) => saint[block]?.[field]).length
+  const fields = [['life', 'burial'], ['life', 'order'], ['veneration', 'beatification'], ['veneration', 'canonizedBy'], ['veneration', 'attributes']]
+  console.log(fields.map(([block, field]) => `${field}: ${count(block, field)}`).join('; '))
+  if (droppedLabels.size > 0) console.log(`rótulos da Wikidata descartados: ${[...droppedLabels].join(' | ')}`)
 }
 
 function ordered(saint, life, veneration, factsSource) {
-  const { day, title, biography, image, source, imageCredit, calendar } = saint
+  const { day, title, biography, summary, image, source, imageCredit, calendar } = saint
   const result = { day, title, biography }
+  if (summary) result.summary = summary
   if (image) result.image = image
   if (source) result.source = source
   if (imageCredit) result.imageCredit = imageCredit
@@ -134,28 +154,33 @@ function infoboxOf(content) {
     const match = /^\s*\|\s*([\wçãõáéíóúâêô_]+)\s*=(.*)$/i.exec(lines[index])
     if (!match) continue
     const name = match[1].toLowerCase()
-    if (!['venerado_em', 'veneração', 'data_canonização', 'canonização', 'patrono', 'padroeiro'].includes(name)) continue
+    if (!INFOBOX_FIELDS.includes(name)) continue
     let value = match[2]
     for (let next = index + 1; next < lines.length && !/^\s*(\||\}\})/.test(lines[next]); next += 1) value += `\n${lines[next]}`
-    const text = wikiText(value, name.startsWith('venera') ? ', ' : '; ')
+    const text = name.startsWith('atrib')
+      ? wikiText(value.replace(/\s*•\s*/g, '\n'), ', ', false)
+      : wikiText(value, name.startsWith('venera') ? ', ' : '; ')
     if (text && !fields[name]) fields[name] = text
   }
   const patronOf = fields.patrono ?? fields.padroeiro ?? null
+  const attributes = fields['atribuições'] ?? fields.atributos ?? null
   return {
     veneratedBy: (fields.venerado_em ?? fields['veneração'])?.replace(/;\s*/g, ', ') ?? null,
+    beatification: fields['data_beatificação'] ?? fields['beatificação'] ?? null,
     canonization: fields['data_canonização'] ?? fields['canonização'] ?? null,
     patronOf: patronOf ? capitalize(patronOf) : null,
+    attributes: attributes ? capitalize(attributes.replace(/;\s*/g, ', ')) : null,
   }
 }
 
-function wikiText(value, separator) {
+function wikiText(value, separator, splitAdjacentLinks = true) {
   let text = value
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<ref[^>]*\/>/gi, '')
     .replace(/<ref[^>]*>[\s\S]*?<\/ref>/gi, '')
     .replace(/\{\{\s*dtlink\s*\|\s*(\d{1,2})\s*\|\s*(\d{1,2})\s*\|\s*(-?\d{1,4})\s*\}\}/gi, (_, day, month, year) => dayMonthYear(Number(day), Number(month), Number(year)))
     .replace(/\{\{\s*(?:nowrap|lang\|\w+)\s*\|([^{}]*)\}\}/gi, '$1')
-    .replace(/\]\]\s*\[\[/g, ']]' + separator + '[[')
+    .replace(/\]\]\s*\[\[/g, splitAdjacentLinks ? ']]' + separator + '[[' : ']] [[')
     .replace(/<\/?br\s*\/?>/gi, separator)
   for (let pass = 0; pass < 5; pass += 1) text = text.replace(/\{\{[^{}]*\}\}/g, '')
   text = text
@@ -172,13 +197,7 @@ function wikiText(value, separator) {
     .replace(/^[\s,;:.—–-]+|[\s,;:—–-]+$/g, '')
     .trim()
   if (!text || /[{}[\]|=]/.test(text)) return null
-  if (text.length > MAX_FIELD_LENGTH) {
-    const cut = text.slice(0, MAX_FIELD_LENGTH)
-    const last = Math.max(cut.lastIndexOf(';'), cut.lastIndexOf(','))
-    if (last < 20) return null
-    text = cut.slice(0, last).trim()
-  }
-  return text
+  return limited(text)
 }
 
 async function readEntities(ids) {
@@ -207,19 +226,43 @@ async function readLabels(ids) {
 }
 
 function referencedItems(claims) {
-  const places = ['P19', 'P20'].flatMap((property) => best(claims, property).slice(0, 1).map(itemOf))
+  const places = ['P19', 'P20', 'P119'].flatMap((property) => best(claims, property).slice(0, 1).map(itemOf))
+  const lists = ['P611', 'P4185'].flatMap((property) => best(claims, property).map(itemOf))
   const religions = statements(claims, 'P841').flatMap((statement) => qualifierItems(statement, 'P140'))
-  return [...places, ...religions].filter(Boolean)
+  const canonizers = statements(claims, 'P411').flatMap((statement) => qualifierItems(statement, 'P1027'))
+  return [...places, ...lists, ...religions, ...canonizers].filter(Boolean)
 }
 
 function lifeOf(claims, labels) {
   const birth = eventOf(claims, 'P569', 'P19', labels)
   const death = eventOf(claims, 'P570', 'P20', labels)
-  if (!birth && !death) return null
+  const burial = labelList(best(claims, 'P119').slice(0, 1).map(itemOf), labels)
+  const order = labelList(best(claims, 'P611').map(itemOf), labels)
+  if (!birth && !death && !burial && !order) return null
   const life = {}
   if (birth) life.birth = birth
   if (death) life.death = death
+  if (burial) life.burial = capitalize(burial)
+  if (order) life.order = capitalize(order)
   return life
+}
+
+const droppedLabels = new Set()
+
+function labelList(ids, labels, accepts = () => true) {
+  const names = []
+  for (const label of ids.map((id) => labels.get(id)).filter(Boolean)) {
+    if (ITEM_ID.test(label) || ENGLISH_LABEL.test(label) || !accepts(label)) droppedLabels.add(label)
+    else if (!names.includes(label)) names.push(label)
+  }
+  return names.length > 0 ? limited(names.join(', ')) : null
+}
+
+function limited(text) {
+  if (text.length <= MAX_FIELD_LENGTH) return text
+  const cut = text.slice(0, MAX_FIELD_LENGTH)
+  const last = Math.max(cut.lastIndexOf(';'), cut.lastIndexOf(','))
+  return last < 20 ? null : cut.slice(0, last).trim()
 }
 
 function eventOf(claims, dateProperty, placeProperty, labels) {
@@ -234,17 +277,47 @@ function venerationOf(claims, labels, infobox, day) {
   const veneration = {}
   const statuses = statements(claims, 'P411').filter((statement) => SAINT_STATUS.has(itemOf(statement)))
 
+  const blessed = statements(claims, 'P411').filter((statement) => itemOf(statement) === BLESSED)
+  const deathYear = deathYearOf(claims)
+
   const veneratedBy = christianOnly(infobox.veneratedBy) ?? christianOnly(churchesOf(claims, labels, statuses))
   if (veneratedBy) veneration.veneratedBy = veneratedBy
 
-  const canonization = infobox.canonization ?? canonizationOf(statuses, deathYearOf(claims))
+  const fromInfobox = infobox.beatification && isPlausibleStatusYear(lastYearOf(infobox.beatification), deathYear) ? infobox.beatification : null
+  const beatification = fromInfobox ?? statusDateOf(blessed, deathYear)
+  if (beatification) veneration.beatification = beatification
+
+  const canonization = infobox.canonization ?? canonizationOf(statuses, deathYear)
   if (canonization) veneration.canonization = canonization
+
+  const canonizedBy = canonizerOf(statuses, labels)
+  if (canonizedBy) veneration.canonizedBy = canonizedBy
 
   veneration.feast = feastOf(day)
 
   if (infobox.patronOf) veneration.patronOf = infobox.patronOf
 
+  const attributes = infobox.attributes ?? labelList(best(claims, 'P4185').map(itemOf), labels)
+  if (attributes) veneration.attributes = capitalize(attributes)
+
   return veneration
+}
+
+function canonizerOf(statuses, labels) {
+  for (const statement of statuses) {
+    const canonizer = labelList(qualifierItems(statement, 'P1027'), labels, (label) => /^Papa\s/.test(label))
+    if (canonizer) return canonizer
+  }
+  return null
+}
+
+function lastYearOf(text) {
+  const years = text.match(/\b\d{3,4}\b/g)
+  return years ? Number(years[years.length - 1]) : null
+}
+
+function isPlausibleStatusYear(year, deathYear) {
+  return year !== null && year >= FIRST_CANONIZATION_YEAR && (deathYear === null || year >= deathYear)
 }
 
 function christianOnly(text) {
@@ -267,15 +340,18 @@ function churchesOf(claims, labels, statuses) {
 }
 
 function canonizationOf(statuses, deathYear) {
+  return statusDateOf(statuses, deathYear) ?? (statuses.some((statement) => itemOf(statement) === PRE_CONGREGATION) ? 'Pré-congregação' : null)
+}
+
+function statusDateOf(statuses, deathYear) {
   for (const statement of statuses) {
     const qualifier = statement.qualifiers?.P585?.[0] ?? statement.qualifiers?.P580?.[0]
     if (qualifier?.snaktype !== 'value') continue
-    const year = yearOf(qualifier.datavalue.value)
-    if (year === null || year < FIRST_CANONIZATION_YEAR || (deathYear !== null && year < deathYear)) continue
+    if (!isPlausibleStatusYear(yearOf(qualifier.datavalue.value), deathYear)) continue
     const text = dateText(qualifier.datavalue.value, false)
     if (text) return text
   }
-  return statuses.some((statement) => itemOf(statement) === PRE_CONGREGATION) ? 'Pré-congregação' : null
+  return null
 }
 
 function deathYearOf(claims) {

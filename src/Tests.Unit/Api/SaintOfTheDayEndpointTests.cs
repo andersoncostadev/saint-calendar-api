@@ -36,6 +36,39 @@ public class SaintOfTheDayEndpointTests : IClassFixture<WebApplicationFactory<Pr
         Assert.Equal("CC0 1.0", root.GetProperty("factsSource").GetProperty("license").GetString());
     }
 
+    [Fact]
+    public async Task Answers_summary_and_the_new_life_and_veneration_fields()
+    {
+        using var body = JsonDocument.Parse(await _client.GetStringAsync("/santo-do-dia/07-31"));
+        var root = body.RootElement;
+
+        var biography = root.GetProperty("biography").GetString()!;
+        var summary = root.GetProperty("summary").EnumerateArray().Select(paragraph => paragraph.GetString()!).ToList();
+        Assert.InRange(summary.Count, 1, 3);
+        Assert.StartsWith(biography, summary[0]);
+
+        var life = root.GetProperty("life");
+        Assert.False(string.IsNullOrWhiteSpace(life.GetProperty("burial").GetString()));
+        Assert.Equal("Companhia de Jesus", life.GetProperty("order").GetString());
+
+        var veneration = root.GetProperty("veneration");
+        Assert.False(string.IsNullOrWhiteSpace(veneration.GetProperty("beatification").GetString()));
+        Assert.StartsWith("Papa ", veneration.GetProperty("canonizedBy").GetString());
+        Assert.False(string.IsNullOrWhiteSpace(veneration.GetProperty("attributes").GetString()));
+    }
+
+    [Fact]
+    public async Task Omits_summary_and_new_fields_without_text()
+    {
+        using var body = JsonDocument.Parse(await _client.GetStringAsync("/santo-do-dia/02-29"));
+        var root = body.RootElement;
+
+        Assert.False(root.TryGetProperty("summary", out _));
+        Assert.False(root.GetProperty("life").TryGetProperty("burial", out _));
+        Assert.False(root.GetProperty("veneration").TryGetProperty("canonizedBy", out _));
+        Assert.False(root.GetProperty("veneration").TryGetProperty("attributes", out _));
+    }
+
     [Theory]
     [InlineData("02-30")]
     [InlineData("13-01")]

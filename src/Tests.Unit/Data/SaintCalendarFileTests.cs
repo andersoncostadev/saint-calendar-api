@@ -1,3 +1,4 @@
+using Domain.Entities.v1;
 using Domain.Rules.v1;
 using Infrastructure.Data.Json.v1;
 
@@ -42,13 +43,51 @@ public class SaintCalendarFileTests
         Assert.All(_repository.All(), saint =>
         {
             Assert.False(string.IsNullOrWhiteSpace(saint.Veneration?.Feast), saint.Day);
-            var texts = new[] { saint.Life?.Birth, saint.Life?.Death, saint.Veneration?.VeneratedBy, saint.Veneration?.Canonization, saint.Veneration?.PatronOf };
+            var texts = new[]
+            {
+                saint.Life?.Birth, saint.Life?.Death, saint.Life?.Burial, saint.Life?.Order,
+                saint.Veneration?.VeneratedBy, saint.Veneration?.Beatification, saint.Veneration?.Canonization,
+                saint.Veneration?.CanonizedBy, saint.Veneration?.PatronOf, saint.Veneration?.Attributes,
+            };
             Assert.All(texts.Where(text => text is not null), text =>
             {
                 Assert.Equal(text!.Trim(), text);
                 Assert.DoesNotMatch(@"[\[\]{}|=<>*]", text);
+                Assert.DoesNotMatch(@"^Q\d+$", text);
+                Assert.True(text.Length <= 160, $"{saint.Day}: {text}");
             });
         });
+    }
+
+    [Fact]
+    public void Every_summary_starts_with_the_biography_and_stays_within_3_paragraphs_and_1200_characters()
+    {
+        var withSummary = _repository.All().Where(saint => saint.Summary is not null).ToList();
+
+        Assert.NotEmpty(withSummary);
+        Assert.All(withSummary, saint =>
+        {
+            var summary = saint.Summary!;
+            Assert.InRange(summary.Count, 1, 3);
+            Assert.True(summary.Sum(paragraph => paragraph.Length) <= 1200, saint.Day);
+            Assert.StartsWith(saint.Biography, summary[0]);
+            Assert.All(summary, paragraph =>
+            {
+                Assert.False(string.IsNullOrWhiteSpace(paragraph), saint.Day);
+                Assert.Equal(paragraph.Trim(), paragraph);
+                Assert.DoesNotMatch(@"[\[\]{}|=<>]", paragraph);
+                Assert.Matches(@"[.!?][""”»)]?$", paragraph);
+            });
+        });
+    }
+
+    [Fact]
+    public async Task Day_with_a_biography_written_for_the_api_has_no_summary()
+    {
+        var saint = Assert.IsType<SaintEntity>(await _repository.FindByDayAsync("02-29", CancellationToken.None));
+
+        Assert.StartsWith("https://www.wikidata.org/", saint.Source?.Url);
+        Assert.Null(saint.Summary);
     }
 
     [Fact]
