@@ -21,6 +21,7 @@ public static class SaintOfTheDayRule
             Day = saint.Day,
             Title = title,
             Biography = biography,
+            Summary = PresentSummary(saint.Summary),
             Image = image,
             Source = saint.Source,
             ImageCredit = image is null ? null : saint.ImageCredit,
@@ -31,11 +32,22 @@ public static class SaintOfTheDayRule
         };
     }
 
+    private static List<string>? PresentSummary(List<string>? summary)
+    {
+        var paragraphs = summary?.Select(Text).OfType<string>().ToList() ?? [];
+        return paragraphs.Count == 0 ? null : paragraphs;
+    }
+
     private static SaintLifeEntity? PresentLife(SaintLifeEntity? life)
     {
-        var birth = Text(life?.Birth);
-        var death = Text(life?.Death);
-        return birth is null && death is null ? null : new SaintLifeEntity { Birth = birth, Death = death };
+        var present = new SaintLifeEntity
+        {
+            Birth = Text(life?.Birth),
+            Death = Text(life?.Death),
+            Burial = Text(life?.Burial),
+            Order = Text(life?.Order),
+        };
+        return present is { Birth: null, Death: null, Burial: null, Order: null } ? null : present;
     }
 
     private static SaintVenerationEntity? PresentVeneration(SaintVenerationEntity? veneration)
@@ -43,11 +55,19 @@ public static class SaintOfTheDayRule
         var present = new SaintVenerationEntity
         {
             VeneratedBy = Text(veneration?.VeneratedBy),
+            Beatification = Text(veneration?.Beatification),
             Canonization = Text(veneration?.Canonization),
+            CanonizedBy = Text(veneration?.CanonizedBy),
             Feast = Text(veneration?.Feast),
             PatronOf = Text(veneration?.PatronOf),
+            Attributes = Text(veneration?.Attributes),
         };
-        return present is { VeneratedBy: null, Canonization: null, Feast: null, PatronOf: null } ? null : present;
+        return present is
+        {
+            VeneratedBy: null, Beatification: null, Canonization: null, CanonizedBy: null, Feast: null, PatronOf: null, Attributes: null,
+        }
+            ? null
+            : present;
     }
 
     private static string? Text(string? value)

@@ -25,6 +25,10 @@ Corpo do 200:
 {
   "title": "Francisco de Assis",
   "biography": "São Francisco de Assis (...) foi um frade católico (...).",
+  "summary": [
+    "São Francisco de Assis (...) foi um frade católico (...). Depois de uma juventude irrequieta (...).",
+    "(...)"
+  ],
   "image": "https://upload.wikimedia.org/(...).jpg",
   "source": {
     "name": "Wikipédia",
@@ -43,13 +47,18 @@ Corpo do 200:
   },
   "life": {
     "birth": "24 de junho de 1182, Assis",
-    "death": "3 de outubro de 1226, Porciúncula"
+    "death": "3 de outubro de 1226, Porciúncula",
+    "burial": "Basílica de São Francisco de Assis",
+    "order": "Ordem dos Frades Menores"
   },
   "veneration": {
     "veneratedBy": "Igreja Católica, Igreja Anglicana",
+    "beatification": "(...)",
     "canonization": "16 de julho de 1228",
+    "canonizedBy": "Papa (...)",
     "feast": "4 de outubro",
-    "patronOf": "Animais; ecologia"
+    "patronOf": "Animais; ecologia",
+    "attributes": "(...)"
   },
   "factsSource": {
     "name": "Wikidata",
@@ -62,7 +71,11 @@ Corpo do 200:
 
 `image` e `imageCredit` só aparecem quando há foto. `image` é sempre `https` e termina em `.jpg`, `.jpeg`, `.png` ou `.webp`.
 
+`summary` é a introdução do artigo da Wikipédia, em parágrafos: no máximo 3 e 1.200 caracteres somados, cortada no fim de uma frase. O primeiro parágrafo começa pela `biography`, que continua obrigatória. Parágrafo sem texto não aparece, e a lista some quando fica vazia. O dia com biografia escrita para a API (`02-29`) não tem `summary`.
+
 Em `life` e `veneration`, campo sem texto não aparece, e o bloco inteiro some quando fica vazio. `veneration.feast` existe em todo dia do catálogo. `factsSource` nomeia o item da Wikidata de onde vêm as datas e os locais. `calendar` aparece quando o santo do dia é o da Canção Nova e aponta para a página dela.
+
+`summary`, `life.burial`, `life.order`, `veneration.beatification`, `veneration.canonizedBy` e `veneration.attributes` foram acrescentados depois do contrato inicial. Nenhum campo anterior mudou de nome, tipo ou regra: quem lê só os campos antigos continua lendo a resposta, e quem lê os novos precisa tratar a ausência deles.
 
 ## Camadas
 
@@ -78,7 +91,9 @@ tools/
   cancaonova-titles.json       opcional: dia → artigo da Wikipédia, quando o nome não é achado sozinho
   generate-calendar.mjs        gera o catálogo; guarda a consulta da Wikidata em wikidata-feasts.json (fora do git)
                                e a reusa quando o serviço de consultas não responde
+  enrich-summary.mjs           acrescenta a introdução do artigo (summary) a cada dia do catálogo
   enrich-life-veneration.mjs   acrescenta vida e veneração a cada dia do catálogo
+  intro-text.mjs               frase e nota de idioma, a mesma regra para a biografia e a introdução
   wikimedia.mjs                pedido às APIs da Wikimedia, com pausa e nova tentativa
   written-biographies.json     frase escrita para esta API onde a Wikipédia não tem artigo
 .github/workflows/pages.yml    testa, exporta e publica no GitHub Pages a cada push na main
@@ -116,8 +131,11 @@ O pedido do dia não consulta nenhuma fonte externa. O catálogo é gerado uma v
 ```bash
 node tools/read-cancaonova-calendar.mjs
 node tools/generate-calendar.mjs
+node tools/enrich-summary.mjs
 node tools/enrich-life-veneration.mjs
 ```
+
+Os dois últimos rodam sobre o catálogo já commitado e não trocam santo de dia.
 
 | Dado | Origem | Licença |
 | --- | --- | --- |
@@ -125,13 +143,19 @@ node tools/enrich-life-veneration.mjs
 | Dia sem Canção Nova | Wikidata, dia de festa (`P841`), só santo católico ou do Calendário Romano Geral | CC0 |
 | Biografia curta | Primeira frase do artigo na Wikipédia em português | CC BY-SA 4.0 |
 | Biografia de `02-29` | Frase escrita para esta API, em `tools/written-biographies.json` | Da API |
+| Introdução (`summary`) | Introdução do mesmo artigo da biografia (`prop=extracts`, `exintro`, `explaintext`) | CC BY-SA 4.0 |
 | Foto | Wikimedia Commons, só domínio público, CC0, CC BY ou CC BY-SA | A do arquivo, gravada junto do dia |
 | Nascimento e morte | Wikidata: data (`P569`, `P570`) com a precisão gravada, “c.” quando marcada como aproximada, e local (`P19`, `P20`) | CC0 |
 | Venerado por, canonização e padroeiro | Infobox do artigo na Wikipédia em português (`venerado_em`, `data_canonização`, `patrono`) | CC BY-SA 4.0 |
 | Venerado por e canonização, sem infobox | Wikidata: religião do dia de festa e status canônico (`P411`) com a data. Canonização anterior a 993 ou à morte é descartada; sem data, santo pré-congregação vira “Pré-congregação” | CC0 |
 | Festa | O próprio dia do catálogo | — |
+| Sepultura e ordem religiosa | Wikidata: local de sepultamento (`P119`) e ordem religiosa (`P611`) | CC0 |
+| Beatificação e atributos na arte | Infobox (`data_beatificação`, `atribuições`); sem ela, Wikidata: data do status de beato em `P411` e símbolo iconográfico (`P4185`) | CC BY-SA 4.0 na infobox; CC0 na Wikidata |
+| Canonizado por | Wikidata: qualificador "conferido por" (`P1027`) da declaração de santo em `P411`, só quando é um papa | CC0 |
 
 O padroado só vem da infobox: na Wikidata (`P2925`) ele mistura lugar, táxon e ofício sem curadoria. Em "venerado por" ficam só igrejas e comunhões cristãs.
+
+Na Wikidata vale a declaração preferida antes das normais, e a depreciada fica de fora. O rótulo é o de `pt-br` ou `pt`; rótulo em inglês ou só com o id (`Q…`) sai. Beatificação anterior à morte ou a 993 sai, como a canonização. Texto com mais de 160 caracteres é cortado na última vírgula; sem vírgula depois dos 20 primeiros caracteres, o campo sai.
 
 Santo da Canção Nova:
 
@@ -158,3 +182,5 @@ Vários santos no mesmo dia sem Canção Nova, nesta ordem:
 Cada santo aparece num dia só. Quando o mesmo santo vence em mais de um dia, ele fica no dia do Calendário Romano Geral; sem essa marca, no dia com menos alternativas, e os outros dias passam ao próximo candidato.
 
 A biografia é a primeira frase da introdução do artigo. Notas de idioma entre parênteses (grego, latim, siríaco, romanização) saem; quando isso muda o texto, a fonte passa a dizer "Wikipédia, trecho adaptado". Dia sem biografia não entra no catálogo. A API não inventa o texto que falta.
+
+A introdução segue a mesma regra de notas de idioma e de fonte adaptada. Ela só entra quando o primeiro parágrafo começa pela biografia. Parágrafo com sobra de wikitexto, chave, colchete ou palavra colada é inválido: se for o primeiro, o dia fica sem `summary`; depois dele, a introdução para ali.

@@ -82,6 +82,65 @@ public class SaintOfTheDayRuleTests
         Assert.Null(saint.Veneration);
     }
 
+    [Fact]
+    public void Trims_summary_paragraphs_and_drops_empty_ones()
+    {
+        var input = Saint();
+        input.Summary = [" Frade. Fundou os Menores. ", "   ", "Morreu em Assis."];
+
+        var saint = SaintOfTheDayRule.Present(input);
+
+        Assert.NotNull(saint);
+        Assert.Equal(["Frade. Fundou os Menores.", "Morreu em Assis."], saint.Summary);
+    }
+
+    [Fact]
+    public void Summary_without_text_is_absent()
+    {
+        var input = Saint();
+        input.Summary = ["", "  "];
+
+        Assert.Null(SaintOfTheDayRule.Present(input)?.Summary);
+        Assert.Null(SaintOfTheDayRule.Present(Saint())?.Summary);
+    }
+
+    [Fact]
+    public void Trims_new_life_and_veneration_fields_and_drops_empty_ones()
+    {
+        var input = Saint();
+        input.Life = new SaintLifeEntity { Burial = " Basílica de São Francisco ", Order = " " };
+        input.Veneration = new SaintVenerationEntity
+        {
+            Beatification = " 1228 ",
+            CanonizedBy = "",
+            Attributes = " Hábito franciscano, estigmas ",
+        };
+
+        var saint = SaintOfTheDayRule.Present(input);
+
+        Assert.NotNull(saint);
+        Assert.Equal("Basílica de São Francisco", saint.Life?.Burial);
+        Assert.Null(saint.Life?.Order);
+        Assert.Null(saint.Life?.Birth);
+        Assert.Equal("1228", saint.Veneration?.Beatification);
+        Assert.Null(saint.Veneration?.CanonizedBy);
+        Assert.Equal("Hábito franciscano, estigmas", saint.Veneration?.Attributes);
+    }
+
+    [Fact]
+    public void Blocks_with_only_empty_new_fields_are_absent()
+    {
+        var input = Saint();
+        input.Life = new SaintLifeEntity { Burial = " ", Order = "" };
+        input.Veneration = new SaintVenerationEntity { Beatification = " ", CanonizedBy = null, Attributes = "" };
+
+        var saint = SaintOfTheDayRule.Present(input);
+
+        Assert.NotNull(saint);
+        Assert.Null(saint.Life);
+        Assert.Null(saint.Veneration);
+    }
+
     private static SaintEntity Saint(string title = "Francisco de Assis", string biography = "Frade.", string? image = null) => new()
     {
         Day = "10-04",

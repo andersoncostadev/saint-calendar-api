@@ -8,6 +8,8 @@ public class SaintEntity
 
     public string Biography { get; set; } = string.Empty;
 
+    public List<string>? Summary { get; set; }
+
     public string? Image { get; set; }
 
     public SaintSourceEntity? Source { get; set; }
@@ -35,17 +37,27 @@ public class SaintLifeEntity
     public string? Birth { get; set; }
 
     public string? Death { get; set; }
+
+    public string? Burial { get; set; }
+
+    public string? Order { get; set; }
 }
 
 public class SaintVenerationEntity
 {
     public string? VeneratedBy { get; set; }
 
+    public string? Beatification { get; set; }
+
     public string? Canonization { get; set; }
+
+    public string? CanonizedBy { get; set; }
 
     public string? Feast { get; set; }
 
     public string? PatronOf { get; set; }
+
+    public string? Attributes { get; set; }
 }
 
 public class SaintSourceEntity
