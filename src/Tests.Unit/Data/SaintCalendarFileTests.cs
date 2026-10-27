@@ -37,6 +37,21 @@ public class SaintCalendarFileTests
     }
 
     [Fact]
+    public void Every_entry_has_its_feast_and_life_or_veneration_text_is_clean()
+    {
+        Assert.All(_repository.All(), saint =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(saint.Veneration?.Feast), saint.Day);
+            var texts = new[] { saint.Life?.Birth, saint.Life?.Death, saint.Veneration?.VeneratedBy, saint.Veneration?.Canonization, saint.Veneration?.PatronOf };
+            Assert.All(texts.Where(text => text is not null), text =>
+            {
+                Assert.Equal(text!.Trim(), text);
+                Assert.DoesNotMatch(@"[\[\]{}|=<>*]", text);
+            });
+        });
+    }
+
+    [Fact]
     public async Task February_29_is_in_the_calendar()
     {
         Assert.NotNull(await _repository.FindByDayAsync("02-29", CancellationToken.None));

@@ -24,7 +24,35 @@ public static class SaintOfTheDayRule
             Image = image,
             Source = saint.Source,
             ImageCredit = image is null ? null : saint.ImageCredit,
+            Life = PresentLife(saint.Life),
+            Veneration = PresentVeneration(saint.Veneration),
+            FactsSource = saint.FactsSource,
         };
+    }
+
+    private static SaintLifeEntity? PresentLife(SaintLifeEntity? life)
+    {
+        var birth = Text(life?.Birth);
+        var death = Text(life?.Death);
+        return birth is null && death is null ? null : new SaintLifeEntity { Birth = birth, Death = death };
+    }
+
+    private static SaintVenerationEntity? PresentVeneration(SaintVenerationEntity? veneration)
+    {
+        var present = new SaintVenerationEntity
+        {
+            VeneratedBy = Text(veneration?.VeneratedBy),
+            Canonization = Text(veneration?.Canonization),
+            Feast = Text(veneration?.Feast),
+            PatronOf = Text(veneration?.PatronOf),
+        };
+        return present is { VeneratedBy: null, Canonization: null, Feast: null, PatronOf: null } ? null : present;
+    }
+
+    private static string? Text(string? value)
+    {
+        var text = value?.Trim();
+        return string.IsNullOrEmpty(text) ? null : text;
     }
 
     public static bool IsPortrait(string? url)

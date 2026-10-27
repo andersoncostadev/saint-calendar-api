@@ -1,11 +1,10 @@
 // Gera src/Infrastructure.Data/Calendar/saints.json uma única vez.
-// Uso: node tools/generate-calendar.mjs
+// Uso: node tools/generate-calendar.mjs, depois node tools/enrich-life-veneration.mjs
 // O pedido do dia, na API, não consulta nenhuma destas fontes.
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import { USER_AGENT, chunk, getJson } from './wikimedia.mjs'
 
-const USER_AGENT = 'SaintCalendarApi/1.0 (https://catholic-pomodoro.pages.dev; one-time calendar snapshot)'
-const PAUSE_MS = 1500
 const OUTPUT = new URL('../src/Infrastructure.Data/Calendar/saints.json', import.meta.url)
 const WRITTEN = new URL('./written-biographies.json', import.meta.url)
 
@@ -369,25 +368,6 @@ async function sparql(query) {
   return body.results.bindings.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value.value])))
 }
 
-async function getJson(url) {
-  const body = url.search.slice(1)
-  const endpoint = `${url.origin}${url.pathname}`
-  let status = 0
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    await sleep(PAUSE_MS)
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    })
-    if (response.ok) return response.json()
-    status = response.status
-    const retryAfter = Number(response.headers.get('retry-after'))
-    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 10000 * (attempt + 1))
-  }
-  throw new Error(`${endpoint} respondeu ${status}`)
-}
-
 function clean(html) {
   if (typeof html !== 'string') return ''
   return html
@@ -409,16 +389,6 @@ function allDays() {
 
 function words(value) {
   return typeof value === 'string' && value.trim() ? value.trim().split(/\s+/) : []
-}
-
-function chunk(list, size) {
-  const result = []
-  for (let index = 0; index < list.length; index += size) result.push(list.slice(index, index + size))
-  return result
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function pad(value) {

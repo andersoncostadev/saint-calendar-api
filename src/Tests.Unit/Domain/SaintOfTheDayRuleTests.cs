@@ -51,6 +51,37 @@ public class SaintOfTheDayRuleTests
         Assert.NotNull(saint.ImageCredit);
     }
 
+    [Fact]
+    public void Trims_life_and_veneration_and_drops_empty_fields()
+    {
+        var input = Saint();
+        input.Life = new SaintLifeEntity { Birth = " 1182, Assis ", Death = "  " };
+        input.Veneration = new SaintVenerationEntity { VeneratedBy = "Igreja Católica ", Feast = "4 de outubro", PatronOf = "" };
+
+        var saint = SaintOfTheDayRule.Present(input);
+
+        Assert.NotNull(saint);
+        Assert.Equal("1182, Assis", saint.Life?.Birth);
+        Assert.Null(saint.Life?.Death);
+        Assert.Equal("Igreja Católica", saint.Veneration?.VeneratedBy);
+        Assert.Null(saint.Veneration?.Canonization);
+        Assert.Null(saint.Veneration?.PatronOf);
+    }
+
+    [Fact]
+    public void Life_and_veneration_without_text_are_absent()
+    {
+        var input = Saint();
+        input.Life = new SaintLifeEntity { Birth = " ", Death = null };
+        input.Veneration = new SaintVenerationEntity { Feast = "" };
+
+        var saint = SaintOfTheDayRule.Present(input);
+
+        Assert.NotNull(saint);
+        Assert.Null(saint.Life);
+        Assert.Null(saint.Veneration);
+    }
+
     private static SaintEntity Saint(string title = "Francisco de Assis", string biography = "Frade.", string? image = null) => new()
     {
         Day = "10-04",

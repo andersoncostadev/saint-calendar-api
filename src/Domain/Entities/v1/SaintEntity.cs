@@ -13,6 +13,30 @@ public class SaintEntity
     public SaintSourceEntity? Source { get; set; }
 
     public SaintImageCreditEntity? ImageCredit { get; set; }
+
+    public SaintLifeEntity? Life { get; set; }
+
+    public SaintVenerationEntity? Veneration { get; set; }
+
+    public SaintSourceEntity? FactsSource { get; set; }
+}
+
+public class SaintLifeEntity
+{
+    public string? Birth { get; set; }
+
+    public string? Death { get; set; }
+}
+
+public class SaintVenerationEntity
+{
+    public string? VeneratedBy { get; set; }
+
+    public string? Canonization { get; set; }
+
+    public string? Feast { get; set; }
+
+    public string? PatronOf { get; set; }
 }
 
 public class SaintSourceEntity

@@ -31,6 +31,9 @@ public class SaintOfTheDayEndpointTests : IClassFixture<WebApplicationFactory<Pr
         Assert.True(root.TryGetProperty("source", out var source));
         Assert.True(source.TryGetProperty("licenseUrl", out _));
         Assert.False(root.TryGetProperty("day", out _));
+        Assert.Equal("4 de outubro", root.GetProperty("veneration").GetProperty("feast").GetString());
+        Assert.True(root.GetProperty("life").TryGetProperty("death", out _));
+        Assert.Equal("CC0 1.0", root.GetProperty("factsSource").GetProperty("license").GetString());
     }
 
     [Theory]
