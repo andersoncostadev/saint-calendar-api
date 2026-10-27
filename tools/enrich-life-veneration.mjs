@@ -16,6 +16,7 @@ const PRE_CONGREGATION = 'Q18344276'
 const GENERAL_ROMAN_CALENDAR = new Set(['Q13012667', 'Q98782022'])
 const CATHOLIC_RELIGIONS = new Set(['Q9592', 'Q1841', 'Q7361618', 'Q597526', 'Q842798'])
 const CIRCA = 'Q5727902'
+const CHRISTIAN_CHURCH = /igreja|comunhão|cristandade|cristianismo|catolicismo|católic|ortodox|anglican|luteran|copta|maronit|armêni/i
 const FIRST_CANONIZATION_YEAR = 993
 const MAX_FIELD_LENGTH = 160
 
@@ -51,11 +52,12 @@ async function main() {
 }
 
 function ordered(saint, life, veneration, factsSource) {
-  const { day, title, biography, image, source, imageCredit } = saint
+  const { day, title, biography, image, source, imageCredit, calendar } = saint
   const result = { day, title, biography }
   if (image) result.image = image
   if (source) result.source = source
   if (imageCredit) result.imageCredit = imageCredit
+  if (calendar) result.calendar = calendar
   if (life) result.life = life
   result.veneration = veneration
   if (factsSource) result.factsSource = factsSource
@@ -232,7 +234,7 @@ function venerationOf(claims, labels, infobox, day) {
   const veneration = {}
   const statuses = statements(claims, 'P411').filter((statement) => SAINT_STATUS.has(itemOf(statement)))
 
-  const veneratedBy = infobox.veneratedBy ?? churchesOf(claims, labels, statuses)
+  const veneratedBy = christianOnly(infobox.veneratedBy) ?? christianOnly(churchesOf(claims, labels, statuses))
   if (veneratedBy) veneration.veneratedBy = veneratedBy
 
   const canonization = infobox.canonization ?? canonizationOf(statuses, deathYearOf(claims))
@@ -243,6 +245,12 @@ function venerationOf(claims, labels, infobox, day) {
   if (infobox.patronOf) veneration.patronOf = infobox.patronOf
 
   return veneration
+}
+
+function christianOnly(text) {
+  if (!text) return null
+  const kept = [...new Set(text.split(/\s*,\s*/).filter((part) => CHRISTIAN_CHURCH.test(part)))]
+  return kept.length > 0 ? kept.join(', ') : null
 }
 
 function churchesOf(claims, labels, statuses) {

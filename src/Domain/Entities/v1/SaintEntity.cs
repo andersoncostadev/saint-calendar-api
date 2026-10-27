@@ -14,11 +14,20 @@ public class SaintEntity
 
     public SaintImageCreditEntity? ImageCredit { get; set; }
 
+    public SaintCalendarEntity? Calendar { get; set; }
+
     public SaintLifeEntity? Life { get; set; }
 
     public SaintVenerationEntity? Veneration { get; set; }
 
     public SaintSourceEntity? FactsSource { get; set; }
+}
+
+public class SaintCalendarEntity
+{
+    public string Name { get; set; } = string.Empty;
+
+    public string Url { get; set; } = string.Empty;
 }
 
 public class SaintLifeEntity

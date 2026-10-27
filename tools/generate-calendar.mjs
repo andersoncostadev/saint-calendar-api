@@ -1,12 +1,24 @@
 // Gera src/Infrastructure.Data/Calendar/saints.json uma única vez.
-// Uso: node tools/generate-calendar.mjs, depois node tools/enrich-life-veneration.mjs
+// Uso: node tools/read-cancaonova-calendar.mjs, node tools/generate-calendar.mjs
+// e node tools/enrich-life-veneration.mjs, nesta ordem.
 // O pedido do dia, na API, não consulta nenhuma destas fontes.
 
-import { readFileSync, writeFileSync } from 'node:fs'
-import { USER_AGENT, chunk, getJson } from './wikimedia.mjs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { USER_AGENT, chunk, getJson, sleep } from './wikimedia.mjs'
 
 const OUTPUT = new URL('../src/Infrastructure.Data/Calendar/saints.json', import.meta.url)
 const WRITTEN = new URL('./written-biographies.json', import.meta.url)
+const CANCAO_NOVA = new URL('./cancaonova-calendar.json', import.meta.url)
+const CANCAO_NOVA_TITLES = new URL('./cancaonova-titles.json', import.meta.url)
+const FEASTS_CACHE = new URL('./wikidata-feasts.json', import.meta.url)
+const CANCAO_NOVA_NAME = 'Canção Nova, Santo do Dia'
+const BLESSED = 'Q2369287'
+const HUMAN = 'Q5'
+const HONORIFICS = new Set(['são', 'santo', 'santa', 'beato', 'beata'])
+const SAINT_PREFIX = /^(são|santo|santa|santos|santas|beato|beata|beatos|beatas)\s/i
+const NAME_STOPWORDS = new Set(['sao', 'santo', 'santa', 'santos', 'santas', 'beato', 'beata', 'beatos', 'beatas', 'frei', 'padre', 'de', 'da', 'do', 'das', 'dos', 'e', 'o', 'a', 'os', 'as', 'i', 'ii', 'iii'])
+const NAME_CONNECTORS = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'di', 'del', 'della', 'von', 'van', 'la', 'le', 'y'])
+const TITLE_PREFIX = /^(são|santo|santa|santos|santas|beato|beata|beatos|beatas|frei|padre)\s+/i
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const DAYS_IN_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
@@ -61,23 +73,29 @@ WHERE {
 
 async function main() {
   const written = JSON.parse(readFileSync(WRITTEN, 'utf8'))
-  const statements = (await sparql(QUERY)).map(readStatement).filter(Boolean)
-  const candidates = byDay(eligible(statements))
+  const statements = (await feastRows()).map(readStatement).filter(Boolean)
+  const feasts = new Set(statements.map((item) => `${item.id}|${item.day}`))
+  const known = new Set(statements.map((item) => item.id))
+  const cancaoNova = await resolveCancaoNova(readJson(CANCAO_NOVA)?.days ?? {}, readJson(CANCAO_NOVA_TITLES) ?? {}, feasts, known)
+  const reserved = new Set([...cancaoNova.values()].map((item) => item.id))
+  const candidates = byDay(eligible(statements).filter((item) => isRecognized(item) && !reserved.has(item.id)))
   const files = [...candidates.values()]
     .flatMap((list) => list.filter((item) => item.ptTitle).sort(rank).slice(0, 6))
     .concat(statements.filter((item) => Object.values(written).some((manual) => manual.wikidata === item.id)))
+    .concat([...cancaoNova.values()])
     .map((item) => item.imageFile)
     .filter(Boolean)
   const images = await readImageLicenses([...new Set(files)])
 
   const ranked = new Map()
   for (const key of allDays()) {
-    const list = (candidates.get(key) ?? [])
+    const fallback = (candidates.get(key) ?? [])
       .filter((item) => item.ptTitle)
       .map((item) => ({ ...item, photo: images.get(item.imageFile) ?? null }))
       .sort(rank)
       .slice(0, CANDIDATES_PER_DAY)
-    ranked.set(key, list)
+    const chosen = cancaoNova.get(key)
+    ranked.set(key, chosen ? [{ ...chosen, photo: images.get(chosen.imageFile) ?? null }, ...fallback] : fallback)
   }
 
   const sentences = await readFirstSentences([...ranked.values()].flat().map((item) => item.ptTitle))
@@ -109,11 +127,201 @@ async function main() {
   const missing = allDays().filter((key) => !days.some((item) => item.day === key))
   const file = {
     generatedAt: new Date().toISOString().slice(0, 10),
-    sources: 'Wikidata (P841, CC0), Wikipédia em português (CC BY-SA 4.0), Wikimedia Commons (licença de cada arquivo)',
+    sources: 'Canção Nova, Santo do Dia (só qual santo cada dia celebra), Wikidata (P841 e P411, CC0), Wikipédia em português (CC BY-SA 4.0), Wikimedia Commons (licença de cada arquivo)',
     days,
   }
   writeFileSync(OUTPUT, JSON.stringify(file, null, 2) + '\n', 'utf8')
-  console.log(`dias: ${days.length}; com foto: ${days.filter((item) => item.image).length}; ausentes: ${missing.join(', ') || 'nenhum'}`)
+  const fromCancaoNova = days.filter((item) => item.calendar).length
+  console.log(`dias: ${days.length}; da Canção Nova: ${fromCancaoNova}; com foto: ${days.filter((item) => item.image).length}; ausentes: ${missing.join(', ') || 'nenhum'}`)
+  for (const item of days.filter((saint) => !saint.calendar)) console.log(`  sem Canção Nova: ${item.day} ${item.title}`)
+}
+
+async function resolveCancaoNova(days, titles, feasts, known) {
+  const wanted = Object.entries(days).flatMap(([day, list]) =>
+    list.map((item, order) => {
+      const full = coreName(item.name)
+      return { day, order, ...item, full, core: firstPerson(full) }
+    }),
+  )
+  const manualOf = (day) => (typeof titles[day] === 'string' ? { article: titles[day] } : titles[day])
+  const lookups = new Map()
+  for (const item of wanted) {
+    const manual = manualOf(item.day)?.article
+    const names = manual ? [manual] : [...new Set([item.core, withoutHonorific(item.core)])]
+    lookups.set(item, names)
+  }
+
+  const direct = await resolveTitles([...new Set([...lookups.values()].flat())])
+  for (const item of wanted) {
+    if (titles[item.day]) continue
+    const found = lookups.get(item).map((name) => direct.get(name)).filter(Boolean)
+    if (found.length > 0) continue
+    const byName = await searchTitles(withoutHonorific(item.core))
+    const byTitle = await searchTitles(item.name.replace(/["“”:]/g, ' '))
+    lookups.set(item, [...new Set([...byName, ...byTitle])])
+  }
+
+  const pages = await resolveTitles([...new Set([...lookups.values()].flat())])
+  const ids = [...new Set([...pages.values()].map((page) => page.id))]
+  const entities = await readEntities(ids)
+
+  const result = new Map()
+  const unresolved = []
+  const namesSaint = (item) => (SAINT_PREFIX.test(item.core) ? 0 : 1)
+  for (const item of wanted.sort((a, b) => a.day.localeCompare(b.day) || namesSaint(a) - namesSaint(b) || a.order - b.order)) {
+    if (result.has(item.day)) continue
+    const manual = Boolean(titles[item.day])
+    const options = lookups
+      .get(item)
+      .map((name) => pages.get(name))
+      .filter(Boolean)
+      .sort((a, b) => Number(feasts.has(`${b.id}|${item.day}`)) - Number(feasts.has(`${a.id}|${item.day}`)))
+    const page = options.find((option) => manual || accepts(item, option, entities.get(option.id), known))
+    if (!page) {
+      unresolved.push(item)
+      continue
+    }
+    const picked = pickFromCancaoNova(item, page, entities.get(page.id))
+    result.set(item.day, { ...picked, title: manualOf(item.day)?.title ?? picked.title })
+  }
+  for (const item of unresolved.filter((entry) => !result.has(entry.day))) console.log(`  Canção Nova sem artigo aceito: ${item.day} ${item.name}`)
+  return result
+}
+
+function pickFromCancaoNova(item, page, entity) {
+  const claims = entity?.claims ?? {}
+  const human = claimItems(claims, 'P31').includes(HUMAN)
+  const label = entity?.labels?.['pt-br']?.value ?? entity?.labels?.pt?.value ?? ''
+  const article = page.title.replace(/\s*\([^)]*\)$/, '').trim()
+  const base = label.length > article.length ? label : article
+  const honorific = item.core.split(' ')[0]
+  const title = !human
+    ? item.core
+    : item.full !== item.core
+      ? item.full
+      : HONORIFICS.has(honorific.toLowerCase()) && !HONORIFICS.has(base.split(' ')[0].toLowerCase())
+      ? `${honorific} ${base}`
+      : base
+  const image = claims.P18?.find((statement) => statement.mainsnak?.snaktype === 'value')?.mainsnak.datavalue.value ?? null
+  return {
+    id: page.id,
+    day: item.day,
+    ptTitle: page.title,
+    title,
+    imageFile: image,
+    statuses: claimItems(claims, 'P411'),
+    parts: [],
+    religions: [],
+    sitelinks: 0,
+    calendar: { name: CANCAO_NOVA_NAME, url: item.url },
+  }
+}
+
+function accepts(item, page, entity, known) {
+  if (!entity) return false
+  const claims = entity.claims ?? {}
+  const names = [page.title, entity.labels?.['pt-br']?.value, entity.labels?.pt?.value, ...(entity.aliases?.pt ?? []).map((alias) => alias.value)]
+    .filter(Boolean)
+    .map(tokens)
+  const wanted = tokens(item.core)
+  if (wanted.length === 0) return false
+  const needed = Math.max(1, Math.ceil(wanted.length * 0.6))
+  const matches = names.some((name) => name.includes(wanted[0]) && wanted.filter((token) => name.includes(token)).length >= needed)
+  if (!matches) return false
+  if (!claimItems(claims, 'P31').includes(HUMAN)) return true
+  return known.has(page.id) || claimItems(claims, 'P411').some((id) => SAINT_STATUS.includes(id) || id === BLESSED)
+}
+
+async function resolveTitles(titles) {
+  const result = new Map()
+  for (const batch of chunk(titles, 50)) {
+    const url = new URL('https://pt.wikipedia.org/w/api.php')
+    url.search = new URLSearchParams({
+      action: 'query',
+      format: 'json',
+      formatversion: '2',
+      prop: 'pageprops',
+      ppprop: 'wikibase_item|disambiguation',
+      redirects: '1',
+      titles: batch.join('|'),
+    })
+    const body = await getJson(url)
+    const back = new Map()
+    for (const item of body.query?.normalized ?? []) back.set(item.to, item.from)
+    for (const item of body.query?.redirects ?? []) back.set(item.to, back.get(item.from) ?? item.from)
+    for (const page of body.query?.pages ?? []) {
+      const id = page.pageprops?.wikibase_item
+      if (!id || page.missing || page.pageprops?.disambiguation !== undefined) continue
+      const value = { title: page.title, id }
+      result.set(page.title, value)
+      let name = page.title
+      while (back.has(name)) {
+        name = back.get(name)
+        result.set(name, value)
+      }
+    }
+  }
+  return result
+}
+
+async function searchTitles(query) {
+  const url = new URL('https://pt.wikipedia.org/w/api.php')
+  url.search = new URLSearchParams({ action: 'query', format: 'json', formatversion: '2', list: 'search', srsearch: query, srlimit: '5', srnamespace: '0' })
+  const body = await getJson(url)
+  return (body.query?.search ?? []).map((item) => item.title)
+}
+
+async function readEntities(ids) {
+  const result = new Map()
+  for (const batch of chunk(ids, 50)) {
+    const url = new URL('https://www.wikidata.org/w/api.php')
+    url.search = new URLSearchParams({ action: 'wbgetentities', format: 'json', props: 'claims|labels|aliases', languages: 'pt-br|pt', ids: batch.join('|') })
+    const body = await getJson(url)
+    for (const [id, entity] of Object.entries(body.entities ?? {})) result.set(id, entity)
+  }
+  return result
+}
+
+function claimItems(claims, property) {
+  return (claims[property] ?? [])
+    .filter((statement) => statement.rank !== 'deprecated' && statement.mainsnak?.snaktype === 'value')
+    .map((statement) => statement.mainsnak.datavalue.value.id)
+    .filter(Boolean)
+}
+
+function coreName(name) {
+  const head = name.replace(/["“”]/g, '').split(/\s*(?:,|:|\s[–—-]\s|\(|\[)\s*/)[0].trim()
+  const words = head.split(/\s+/)
+  const end = words.findIndex((word, index) => index > 0 && /^[a-zà-ú]/.test(word) && !NAME_CONNECTORS.has(word))
+  return (end === -1 ? words : words.slice(0, end)).join(' ').replace(/\s+(?:e|de|da|do|das|dos)$/i, '')
+}
+
+function firstPerson(name) {
+  if (!SAINT_PREFIX.test(name)) return name
+  const [first] = name.split(/\s+e\s+/)
+  return first.replace(/^Santos\s/i, 'São ').replace(/^Santas\s/i, 'Santa ').replace(/^Beatos\s/i, 'Beato ').replace(/^Beatas\s/i, 'Beata ')
+}
+
+function withoutHonorific(name) {
+  const stripped = name.replace(TITLE_PREFIX, '')
+  return stripped || name
+}
+
+function tokens(text) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word && !NAME_STOPWORDS.has(word))
+}
+
+function readJson(url) {
+  return existsSync(url) ? JSON.parse(readFileSync(url, 'utf8')) : null
+}
+
+function isRecognized(item) {
+  return isCatholic(item) || isGeneralRoman(item)
 }
 
 function readStatement(row) {
@@ -217,6 +425,7 @@ function entry(day, item, biography, photo, source) {
   if (photo) saint.image = photo.url
   saint.source = source
   if (photo) saint.imageCredit = { author: photo.author, license: photo.license, url: photo.page }
+  if (item.calendar) saint.calendar = item.calendar
   return saint
 }
 
@@ -353,16 +562,34 @@ function tidy(text) {
     .trim()
 }
 
+async function feastRows() {
+  try {
+    const rows = await sparql(QUERY)
+    writeFileSync(FEASTS_CACHE, JSON.stringify({ readAt: new Date().toISOString(), rows }) + '\n', 'utf8')
+    return rows
+  } catch (error) {
+    const cached = readJson(FEASTS_CACHE)
+    if (!cached) throw error
+    console.log(`Wikidata indisponível (${error.message}); usando a consulta de ${cached.readAt}`)
+    return cached.rows
+  }
+}
+
 async function sparql(query) {
-  const response = await fetch('https://query.wikidata.org/sparql', {
-    method: 'POST',
-    headers: {
-      'User-Agent': USER_AGENT,
-      Accept: 'application/sparql-results+json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({ query }),
-  })
+  let response
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    response = await fetch('https://query.wikidata.org/sparql', {
+      method: 'POST',
+      headers: {
+        'User-Agent': USER_AGENT,
+        Accept: 'application/sparql-results+json',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ query }),
+    })
+    if (response.ok || ![429, 500, 502, 503, 504].includes(response.status)) break
+    await sleep(attempt * 30000)
+  }
   if (!response.ok) throw new Error(`SPARQL ${response.status}`)
   const body = await response.json()
   return body.results.bindings.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value.value])))

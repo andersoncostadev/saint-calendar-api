@@ -52,6 +52,20 @@ public class SaintCalendarFileTests
     }
 
     [Fact]
+    public void Most_days_follow_the_cancao_nova_calendar_and_point_to_its_page()
+    {
+        var days = _repository.All();
+        var chosen = days.Where(saint => saint.Calendar is not null).ToList();
+
+        Assert.True(chosen.Count * 4 >= days.Count * 3, $"só {chosen.Count} de {days.Count} dias da Canção Nova");
+        Assert.All(chosen, saint =>
+        {
+            Assert.Equal("Canção Nova, Santo do Dia", saint.Calendar!.Name);
+            Assert.StartsWith("https://santo.cancaonova.com/santo/", saint.Calendar.Url);
+        });
+    }
+
+    [Fact]
     public async Task February_29_is_in_the_calendar()
     {
         Assert.NotNull(await _repository.FindByDayAsync("02-29", CancellationToken.None));

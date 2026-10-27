@@ -24,6 +24,7 @@ public static class SaintOfTheDayRule
             Image = image,
             Source = saint.Source,
             ImageCredit = image is null ? null : saint.ImageCredit,
+            Calendar = saint.Calendar,
             Life = PresentLife(saint.Life),
             Veneration = PresentVeneration(saint.Veneration),
             FactsSource = saint.FactsSource,

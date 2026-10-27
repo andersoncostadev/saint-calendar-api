@@ -2,7 +2,9 @@
 
 API ASP.NET Core que devolve um santo para cada dia civil do calendário atual. Ela existe para a página [Pomodoro Católico](https://catholic-pomodoro.pages.dev) mostrar o santo do dia debaixo da liturgia.
 
-A API só lê um catálogo. Não há banco, conta, autenticação nem escrita.
+A API só lê um catálogo. Não há banco, conta, autenticação nem escrita. Por isso ela não precisa de servidor em produção: o mesmo código exporta um arquivo por dia, e o GitHub Pages serve esses arquivos no mesmo caminho do `GET`.
+
+O santo de cada dia é o que a [Canção Nova](https://santo.cancaonova.com) celebra, porque ela segue o Martirológio Romano. Da Canção Nova vem só qual santo é celebrado em cada dia; nenhum texto, oração ou foto dela entra no catálogo.
 
 ## Contrato
 
@@ -35,6 +37,10 @@ Corpo do 200:
     "license": "Public domain",
     "url": "https://commons.wikimedia.org/wiki/File:(...)"
   },
+  "calendar": {
+    "name": "Canção Nova, Santo do Dia",
+    "url": "https://santo.cancaonova.com/santo/(...)/"
+  },
   "life": {
     "birth": "24 de junho de 1182, Assis",
     "death": "3 de outubro de 1226, Porciúncula"
@@ -56,21 +62,26 @@ Corpo do 200:
 
 `image` e `imageCredit` só aparecem quando há foto. `image` é sempre `https` e termina em `.jpg`, `.jpeg`, `.png` ou `.webp`.
 
-Em `life` e `veneration`, campo sem texto não aparece, e o bloco inteiro some quando fica vazio. `veneration.feast` existe em todo dia do catálogo. `factsSource` nomeia o item da Wikidata de onde vêm as datas e os locais.
+Em `life` e `veneration`, campo sem texto não aparece, e o bloco inteiro some quando fica vazio. `veneration.feast` existe em todo dia do catálogo. `factsSource` nomeia o item da Wikidata de onde vêm as datas e os locais. `calendar` aparece quando o santo do dia é o da Canção Nova e aponta para a página dela.
 
 ## Camadas
 
 ```text
 src/
-  Api/                  controller do GET, CORS e injeção de dependência
+  Api/                  controller do GET, CORS, injeção de dependência e exportação estática
   Domain/               entidade, regra do dia, regra da resposta e o contrato ISaintRepository
   Infrastructure.Data/  implementação do contrato sobre Calendar/saints.json
-  Tests.Unit/           regra do dia, regra da resposta, catálogo e endpoint
+  Tests.Unit/           regra do dia, regra da resposta, catálogo, endpoint e exportação
 tools/
-  generate-calendar.mjs        gera o catálogo uma única vez
+  read-cancaonova-calendar.mjs lê qual santo a Canção Nova celebra em cada dia (nome, dia e URL)
+  cancaonova-calendar.json     o que a leitura acima gravou
+  cancaonova-titles.json       opcional: dia → artigo da Wikipédia, quando o nome não é achado sozinho
+  generate-calendar.mjs        gera o catálogo; guarda a consulta da Wikidata em wikidata-feasts.json (fora do git)
+                               e a reusa quando o serviço de consultas não responde
   enrich-life-veneration.mjs   acrescenta vida e veneração a cada dia do catálogo
   wikimedia.mjs                pedido às APIs da Wikimedia, com pausa e nova tentativa
   written-biographies.json     frase escrita para esta API onde a Wikipédia não tem artigo
+.github/workflows/pages.yml    testa, exporta e publica no GitHub Pages a cada push na main
 ```
 
 O catálogo é um JSON versionado neste repositório. Corrigir um santo é commit e deploy. Se um dia a API precisar de edição sem deploy, `Infrastructure.Data` troca para um banco e o contrato em `Domain` continua o mesmo.
@@ -86,18 +97,32 @@ dotnet run --project src/Api
 
 A API sobe em `http://localhost:5080`. Exemplo: `http://localhost:5080/santo-do-dia/10-04`.
 
-## Como o catálogo nasce
-
-O pedido do dia não consulta nenhuma fonte externa. O catálogo é gerado uma vez, revisado e commitado:
+## Publicação no GitHub Pages
 
 ```bash
+dotnet run --project src/Api -- export "$PWD/site"
+```
+
+O caminho precisa ser absoluto, porque o `dotnet run` roda a partir de `src/Api`. O comando aplica a mesma regra do `GET` a cada um dos 366 dias e grava `site/santo-do-dia/{mm}-{dd}`, sem extensão, mais `site/.nojekyll`. Dia que daria 404 na API não vira arquivo, e o Pages responde 404 do mesmo jeito. Um teste compara cada arquivo com a resposta do endpoint.
+
+O workflow `.github/workflows/pages.yml` faz isso a cada push na `main` e publica a pasta. Para ligar: no repositório do GitHub, **Settings → Pages → Source: GitHub Actions**. O repositório precisa ser público no plano gratuito.
+
+O Pages responde com `access-control-allow-origin: *`. Na página, `VITE_SAINT_API_URL` passa a ser o endereço do Pages, por exemplo `https://<usuario>.github.io/<repositorio>`, e o pedido continua `GET {VITE_SAINT_API_URL}/santo-do-dia/{mm}-{dd}`.
+
+## Como o catálogo nasce
+
+O pedido do dia não consulta nenhuma fonte externa. O catálogo é gerado uma vez, revisado e commitado, nesta ordem:
+
+```bash
+node tools/read-cancaonova-calendar.mjs
 node tools/generate-calendar.mjs
 node tools/enrich-life-veneration.mjs
 ```
 
 | Dado | Origem | Licença |
 | --- | --- | --- |
-| Nome e dia | Wikidata, dia de festa (`P841`) | CC0 |
+| Qual santo em cada dia | Canção Nova, Santo do Dia: só o nome, o dia e a URL da página | — |
+| Dia sem Canção Nova | Wikidata, dia de festa (`P841`), só santo católico ou do Calendário Romano Geral | CC0 |
 | Biografia curta | Primeira frase do artigo na Wikipédia em português | CC BY-SA 4.0 |
 | Biografia de `02-29` | Frase escrita para esta API, em `tools/written-biographies.json` | Da API |
 | Foto | Wikimedia Commons, só domínio público, CC0, CC BY ou CC BY-SA | A do arquivo, gravada junto do dia |
@@ -106,16 +131,23 @@ node tools/enrich-life-veneration.mjs
 | Venerado por e canonização, sem infobox | Wikidata: religião do dia de festa e status canônico (`P411`) com a data. Canonização anterior a 993 ou à morte é descartada; sem data, santo pré-congregação vira “Pré-congregação” | CC0 |
 | Festa | O próprio dia do catálogo | — |
 
-O padroado só vem da infobox: na Wikidata (`P2925`) ele mistura lugar, táxon e ofício sem curadoria.
+O padroado só vem da infobox: na Wikidata (`P2925`) ele mistura lugar, táxon e ofício sem curadoria. Em "venerado por" ficam só igrejas e comunhões cristãs.
 
-Quem entra:
+Santo da Canção Nova:
 
-- Pessoa com status de santo na Wikidata (santo, santo católico, santo canonizado ou santo pré-congregação), ou com a festa marcada como Calendário Romano Geral.
+- O nome publicado lá é ligado ao artigo da Wikipédia em português e ao item da Wikidata. A busca tenta o nome, o nome sem "São", "Santa" ou "Beato", e por fim a busca da Wikipédia com o título inteiro.
+- O artigo só é aceito se tiver o primeiro nome e pelo menos 60% dos nomes do santo. Sendo pessoa, ela precisa ter status de santo ou beato na Wikidata, ou estar entre os santos da consulta abaixo.
+- Entre artigos aceitos, ganha o que tem a festa no mesmo dia na Wikidata. No dia com santo e festa do Senhor, o santo vem primeiro. No dia com dois santos ("Santos Timóteo e Tito"), a biografia é a do primeiro e o título é o da Canção Nova.
+- Nome que não é achado sozinho pode ser ligado à mão em `tools/cancaonova-titles.json`.
+
+Dia sem Canção Nova, ou com nome que não foi ligado:
+
+- Pessoa com status de santo católico na Wikidata (santo católico, santo canonizado ou santo pré-congregação), ou com a festa marcada como Calendário Romano Geral. O status genérico "santo" sozinho não basta, porque também marca santos só das igrejas ortodoxas.
 - Fica de fora a data com fim (`P582`), a marcada como calendário tridentino, de 1960 ou ortodoxo, e a de outra religião que não a Igreja Católica ou o cristianismo ocidental.
 - Quem tem uma data marcada como Calendário Romano Geral conta só nessa data.
 - Festa móvel não vira dia: só entra o que a Wikidata traz como mês e dia.
 
-Vários santos no mesmo dia, nesta ordem:
+Vários santos no mesmo dia sem Canção Nova, nesta ordem:
 
 1. Só quem tem artigo na Wikipédia em português.
 2. Quem tem a festa marcada como Calendário Romano Geral.
