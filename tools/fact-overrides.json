@@ -1,0 +1,20 @@
+{
+  "02-11": { "attributes": null, "if": "Aparição mariana" },
+  "02-20": { "attributes": null, "if": "Devoção a Jesus-Eucaristia" },
+  "03-02": { "attributes": null, "if": "Esposa, mãe" },
+  "03-17": { "attributes": "Trevo e cruz", "if": "Pregar o cristianismo" },
+  "05-24": { "attributes": null, "if": "Protetora da família" },
+  "06-10": { "attributes": null, "if": "Proteção da nação" },
+  "06-12": { "attributes": null, "if": "Coroou Carlos Magno" },
+  "06-21": { "attributes": null, "if": "Jovens e estudantes" },
+  "06-23": { "attributes": null, "if": "Padre da Forca" },
+  "06-27": { "attributes": null, "if": "Imagem pintada" },
+  "08-24": { "attributes": "Faca e pedaço de pele", "if": "Faca e pedaço de pele" },
+  "09-04": { "attributes": null, "if": "Salvar Palermo" },
+  "10-13": { "attributes": null, "if": "Membro da Associação" },
+  "10-16": { "attributes": null, "if": "Vidente do Sagrado Coração" },
+  "11-07": { "attributes": "Hábito de bispo e báculo", "if": "Hábito de bispo e báculo" },
+  "11-10": { "attributes": null, "if": "Impedir Átila" },
+  "11-27": { "attributes": null, "if": "Aparições a Santa Catarina" },
+  "12-08": { "attributes": null, "if": "Concepção sem pecado" }
+}

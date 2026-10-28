@@ -4,6 +4,7 @@
 // O pedido do dia, na API, não consulta nenhuma destas fontes.
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { authorOf, cancaoNovaTitle, collapsePunctuation, dayKeyFromLabel, FEAST_REQUIRED_TYPES, isMovableCelebration, licenseName, RELIGIOUS_TYPES, sexOf, wikidataTitle } from './calendar-rules.mjs'
 import { firstSentence, tidy, withoutLanguageNotes } from './intro-text.mjs'
 import { USER_AGENT, chunk, getJson, sleep } from './wikimedia.mjs'
 
@@ -72,22 +73,34 @@ WHERE {
 
 async function main() {
   const written = JSON.parse(readFileSync(WRITTEN, 'utf8'))
+  const cancaoDays = readJson(CANCAO_NOVA)?.days ?? {}
   const statements = (await feastRows()).map(readStatement).filter(Boolean)
   const feasts = new Set(statements.map((item) => `${item.id}|${item.day}`))
   const known = new Set(statements.map((item) => item.id))
-  const cancaoNova = await resolveCancaoNova(readJson(CANCAO_NOVA)?.days ?? {}, readJson(CANCAO_NOVA_TITLES) ?? {}, feasts, known)
-  const reserved = new Set([...cancaoNova.values()].map((item) => item.id))
+  const manualTitles = readJson(CANCAO_NOVA_TITLES) ?? {}
+  const writtenOnly = new Set(Object.keys(written).filter((day) => !manualTitles[day]))
+  const cancaoNova = await resolveCancaoNova(cancaoDays, manualTitles, feasts, known, new Set(Object.keys(written)))
+  const writtenEntities = await readEntities(Object.values(written).map((item) => item.wikidata).filter(Boolean))
+  const reserved = new Set([
+    ...[...cancaoNova.values()].map((item) => item.id),
+    ...Object.values(written).map((item) => item.wikidata).filter(Boolean),
+  ])
   const candidates = byDay(eligible(statements).filter((item) => isRecognized(item) && !reserved.has(item.id)))
   const files = [...candidates.values()]
     .flatMap((list) => list.filter((item) => item.ptTitle).sort(rank).slice(0, 6))
     .concat(statements.filter((item) => Object.values(written).some((manual) => manual.wikidata === item.id)))
     .concat([...cancaoNova.values()])
     .map((item) => item.imageFile)
+    .concat([...writtenEntities.values()].map(imageFileOf))
     .filter(Boolean)
   const images = await readImageLicenses([...new Set(files)])
 
   const ranked = new Map()
   for (const key of allDays()) {
+    if (writtenOnly.has(key)) {
+      ranked.set(key, [])
+      continue
+    }
     const fallback = (candidates.get(key) ?? [])
       .filter((item) => item.ptTitle)
       .map((item) => ({ ...item, photo: images.get(item.imageFile) ?? null }))
@@ -102,6 +115,7 @@ async function main() {
     [...ranked.entries()].map(([key, list]) => [key, list.filter((item) => sentences.has(item.ptTitle))]),
   )
   const picks = assignOnce(options)
+  await honorificForWikidata([...picks.values()].filter((item) => !item.calendar))
 
   const days = []
   for (const key of allDays()) {
@@ -113,14 +127,11 @@ async function main() {
     }
     const manual = written[key]
     if (!manual) continue
-    const item = statements.find((statement) => statement.id === manual.wikidata && statement.day === key)
-    const photo = item ? images.get(item.imageFile) ?? null : null
-    days.push(
-      entry(key, { ...item, title: manual.title }, manual.biography, photo, {
-        ...WIKIDATA_SOURCE,
-        url: `https://www.wikidata.org/wiki/${manual.wikidata}`,
-      }),
-    )
+    const entity = manual.wikidata ? writtenEntities.get(manual.wikidata) : null
+    const imageFile = imageFileOf(entity)
+    const photo = imageFile ? images.get(imageFile) ?? null : null
+    const calendar = fixedCalendar(key, cancaoDays)
+    days.push(entry(key, { title: manual.title, calendar }, collapsePunctuation(manual.biography), photo, writtenSource(manual, calendar)))
   }
 
   const missing = allDays().filter((key) => !days.some((item) => item.day === key))
@@ -135,13 +146,13 @@ async function main() {
   for (const item of days.filter((saint) => !saint.calendar)) console.log(`  sem Canção Nova: ${item.day} ${item.title}`)
 }
 
-async function resolveCancaoNova(days, titles, feasts, known) {
+async function resolveCancaoNova(days, titles, feasts, known, writtenDays) {
   const wanted = Object.entries(days).flatMap(([day, list]) =>
     list.map((item, order) => {
       const full = coreName(item.name)
       return { day, order, ...item, full, core: firstPerson(full) }
     }),
-  )
+  ).filter((item) => !isMovableCelebration(item.name) && !(writtenDays.has(item.day) && !titles[item.day]))
   const manualOf = (day) => (typeof titles[day] === 'string' ? { article: titles[day] } : titles[day])
   const lookups = new Map()
   for (const item of wanted) {
@@ -163,11 +174,11 @@ async function resolveCancaoNova(days, titles, feasts, known) {
   const pages = await resolveTitles([...new Set([...lookups.values()].flat())])
   const ids = [...new Set([...pages.values()].map((page) => page.id))]
   const entities = await readEntities(ids)
+  const dayLabels = await readDayLabels(feastItemIds(entities))
 
   const result = new Map()
   const unresolved = []
-  const namesSaint = (item) => (SAINT_PREFIX.test(item.core) ? 0 : 1)
-  for (const item of wanted.sort((a, b) => a.day.localeCompare(b.day) || namesSaint(a) - namesSaint(b) || a.order - b.order)) {
+  for (const item of wanted.sort((a, b) => a.day.localeCompare(b.day) || a.order - b.order)) {
     if (result.has(item.day)) continue
     const manual = Boolean(titles[item.day])
     const options = lookups
@@ -175,39 +186,32 @@ async function resolveCancaoNova(days, titles, feasts, known) {
       .map((name) => pages.get(name))
       .filter(Boolean)
       .sort((a, b) => Number(feasts.has(`${b.id}|${item.day}`)) - Number(feasts.has(`${a.id}|${item.day}`)))
-    const page = options.find((option) => manual || accepts(item, option, entities.get(option.id), known))
+    const page = options.find((option) => manual || accepts(item, option, entities.get(option.id), known, dayLabels))
     if (!page) {
       unresolved.push(item)
       continue
     }
-    const picked = pickFromCancaoNova(item, page, entities.get(page.id))
-    result.set(item.day, { ...picked, title: manualOf(item.day)?.title ?? picked.title })
+    const entity = entities.get(page.id)
+    const picked = pickFromCancaoNova(item, page, entity, manualOf(item.day)?.title)
+    result.set(item.day, picked)
+    const types = claimItems(entity?.claims ?? {}, 'P31')
+    if (!types.includes(HUMAN)) console.log(`  aceito sem ser pessoa: ${item.day} ${page.title}`)
+    else if (!feasts.has(`${page.id}|${item.day}`)) console.log(`  pessoa sem festa no dia: ${item.day} ${page.title}`)
   }
   for (const item of unresolved.filter((entry) => !result.has(entry.day))) console.log(`  Canção Nova sem artigo aceito: ${item.day} ${item.name}`)
   return result
 }
 
-function pickFromCancaoNova(item, page, entity) {
+function pickFromCancaoNova(item, page, entity, manualTitle) {
   const claims = entity?.claims ?? {}
   const human = claimItems(claims, 'P31').includes(HUMAN)
-  const label = entity?.labels?.['pt-br']?.value ?? entity?.labels?.pt?.value ?? ''
-  const article = page.title.replace(/\s*\([^)]*\)$/, '').trim()
-  const base = label.length > article.length ? label : article
-  const honorific = item.core.split(' ')[0]
-  const title = !human
-    ? item.core
-    : item.full !== item.core
-      ? item.full
-      : HONORIFICS.has(honorific.toLowerCase()) && !HONORIFICS.has(base.split(' ')[0].toLowerCase())
-      ? `${honorific} ${base}`
-      : base
-  const image = claims.P18?.find((statement) => statement.mainsnak?.snaktype === 'value')?.mainsnak.datavalue.value ?? null
+  const title = manualTitle ?? (human ? cancaoNovaTitle(titleHead(item.name), sexOf(claimItems(claims, 'P21'))) : titleHead(item.name))
   return {
     id: page.id,
     day: item.day,
     ptTitle: page.title,
     title,
-    imageFile: image,
+    imageFile: imageFileOf(entity),
     statuses: claimItems(claims, 'P411'),
     parts: [],
     religions: [],
@@ -216,7 +220,7 @@ function pickFromCancaoNova(item, page, entity) {
   }
 }
 
-function accepts(item, page, entity, known) {
+function accepts(item, page, entity, known, dayLabels) {
   if (!entity) return false
   const claims = entity.claims ?? {}
   const names = [page.title, entity.labels?.['pt-br']?.value, entity.labels?.pt?.value, ...(entity.aliases?.pt ?? []).map((alias) => alias.value)]
@@ -227,8 +231,87 @@ function accepts(item, page, entity, known) {
   const needed = Math.max(1, Math.ceil(wanted.length * 0.6))
   const matches = names.some((name) => name.includes(wanted[0]) && wanted.filter((token) => name.includes(token)).length >= needed)
   if (!matches) return false
-  if (!claimItems(claims, 'P31').includes(HUMAN)) return true
-  return known.has(page.id) || claimItems(claims, 'P411').some((id) => SAINT_STATUS.includes(id) || id === BLESSED)
+  const types = claimItems(claims, 'P31')
+  if (types.includes(HUMAN)) return known.has(page.id) || claimItems(claims, 'P411').some((id) => SAINT_STATUS.includes(id) || id === BLESSED)
+  if (!types.some((id) => RELIGIOUS_TYPES.has(id))) return false
+  if (types.some((id) => FEAST_REQUIRED_TYPES.has(id)) && !feastDays(entity, dayLabels).includes(item.day)) return false
+  return true
+}
+
+function titleHead(name) {
+  const head = name.replace(/["“”]/g, '').split(/\s*(?:,|:|\s[–—-]\s|\(|\[)\s*/)[0].trim()
+  const words = head.split(/\s+/)
+  const cut = words.findIndex((word, index) => index > 0 && /^[\p{Ll}0-9]/u.test(word) && !NAME_CONNECTORS.has(word.toLowerCase()))
+  return (cut === -1 ? words : words.slice(0, cut)).join(' ').replace(/\s+(?:e|de|da|do|das|dos)$/i, '')
+}
+
+function imageFileOf(entity) {
+  const value = entity?.claims?.P18?.find((statement) => statement.rank !== 'deprecated' && statement.mainsnak?.snaktype === 'value')?.mainsnak.datavalue.value
+  return typeof value === 'string' ? value : null
+}
+
+function feastItemIds(entities) {
+  const ids = []
+  for (const entity of entities.values()) {
+    for (const statement of entity?.claims?.P841 ?? []) {
+      const id = statement.mainsnak?.datavalue?.value?.id
+      if (id) ids.push(id)
+    }
+  }
+  return [...new Set(ids)]
+}
+
+function feastDays(entity, dayLabels) {
+  const days = []
+  for (const statement of entity?.claims?.P841 ?? []) {
+    if (statement.rank === 'deprecated' || statement.mainsnak?.snaktype !== 'value') continue
+    const value = statement.mainsnak.datavalue.value
+    if (typeof value?.time === 'string' && value.precision >= 11) {
+      const match = /^[+-]\d+-(\d\d)-(\d\d)/.exec(value.time)
+      if (match) days.push(`${match[1]}-${match[2]}`)
+    } else if (value?.id && dayLabels.get(value.id)) days.push(dayLabels.get(value.id))
+  }
+  return days
+}
+
+async function readDayLabels(ids) {
+  const result = new Map()
+  for (const batch of chunk(ids, 50)) {
+    const url = new URL('https://www.wikidata.org/w/api.php')
+    url.search = new URLSearchParams({ action: 'wbgetentities', format: 'json', props: 'labels', languages: 'pt|en', ids: batch.join('|') })
+    const body = await getJson(url)
+    for (const [id, entity] of Object.entries(body.entities ?? {})) {
+      const label = entity.labels?.pt?.value ?? entity.labels?.en?.value ?? ''
+      const key = dayKeyFromLabel(label)
+      if (key) result.set(id, key)
+    }
+  }
+  return result
+}
+
+async function honorificForWikidata(items) {
+  const entities = await readEntities(items.map((item) => item.id))
+  for (const item of items) {
+    const claims = entities.get(item.id)?.claims ?? {}
+    item.title = wikidataTitle(item.title, {
+      saint: item.statuses.some((id) => SAINT_STATUS.includes(id)),
+      blessed: item.statuses.includes(BLESSED),
+      sex: sexOf(claimItems(claims, 'P21')),
+    })
+  }
+}
+
+function fixedCalendar(day, days) {
+  const entry = (days[day] ?? []).find((item) => !isMovableCelebration(item.name))
+  return entry ? { name: CANCAO_NOVA_NAME, url: entry.url } : undefined
+}
+
+function writtenSource(manual) {
+  if (!manual.wikidata) return null
+  return {
+    ...WIKIDATA_SOURCE,
+    url: `https://www.wikidata.org/wiki/${manual.wikidata}`,
+  }
 }
 
 async function resolveTitles(titles) {
@@ -378,7 +461,7 @@ function keepScore(options, index, key) {
   const list = options.get(key)
   const item = list[index.get(key)]
   const alternatives = list.length - index.get(key) - 1
-  return (isGeneralRoman(item) ? 1000 : 0) - alternatives
+  return (item.calendar ? 10000 : 0) + (isGeneralRoman(item) ? 1000 : 0) - alternatives
 }
 
 function eligible(statements) {
@@ -422,7 +505,7 @@ function isCatholic(item) {
 function entry(day, item, biography, photo, source) {
   const saint = { day, title: item.title, biography }
   if (photo) saint.image = photo.url
-  saint.source = source
+  if (source) saint.source = source
   if (photo) saint.imageCredit = { author: photo.author, license: photo.license, url: photo.page }
   if (item.calendar) saint.calendar = item.calendar
   return saint
@@ -456,15 +539,16 @@ async function readImageLicenses(files) {
       const info = page.imageinfo?.[0]
       if (!info) continue
       const meta = info.extmetadata ?? {}
-      const license = clean(meta.LicenseShortName?.value)
-      if (!isReusable(license)) continue
+      const rawLicense = clean(meta.LicenseShortName?.value)
+      if (!isReusable(rawLicense)) continue
+      const license = licenseName(rawLicense)
       const imageUrl = (info.thumburl ?? info.url ?? '').split('?')[0]
       if (!isPortraitUrl(imageUrl)) continue
       const title = normalized.get(page.title) ?? page.title
       result.set(title.replace(/^File:/, ''), {
         url: imageUrl,
         license,
-        author: clean(meta.Artist?.value) || 'Autor desconhecido',
+        author: authorOf(meta.Artist?.value),
         page: info.descriptionurl,
       })
     }
@@ -516,7 +600,7 @@ function sentenceOf(extract) {
   const paragraph = extract.split('\n').map((line) => line.trim()).find(Boolean) ?? ''
   const original = firstSentence(tidy(paragraph))
   if (!original) return null
-  const text = firstSentence(tidy(withoutLanguageNotes(paragraph)))
+  const text = collapsePunctuation(firstSentence(tidy(withoutLanguageNotes(paragraph))))
   if (!text) return null
   return { text, adapted: text !== original }
 }
@@ -545,6 +629,7 @@ async function sparql(query) {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({ query }),
+      signal: AbortSignal.timeout(45000),
     })
     if (response.ok || ![429, 500, 502, 503, 504].includes(response.status)) break
     await sleep(attempt * 30000)

@@ -26,7 +26,7 @@ function sentenceEnds(text) {
       const rest = text.slice(index + 1)
       if (rest !== '' && !/^\s+["“«(]?[A-ZÀ-Ý]/.test(rest)) continue
       const word = (/(\S+)$/.exec(text.slice(0, index))?.[1] ?? '').replace(/^\(/, '')
-      if (/^[A-ZÀ-Ý]$/.test(word) || word.includes('.') || ABBREVIATIONS.has(word.toLowerCase())) continue
+      if (rest !== '' && (/^[A-ZÀ-Ý]$/.test(word) || word.includes('.') || ABBREVIATIONS.has(word.toLowerCase()))) continue
       ends.push(index + 1)
     }
   }

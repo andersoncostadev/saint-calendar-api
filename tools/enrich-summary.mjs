@@ -4,6 +4,7 @@
 // Pode rodar de novo: troca o summary antigo pelo novo e mantém o resto do dia.
 
 import { readFileSync, writeFileSync } from 'node:fs'
+import { collapsePunctuation } from './calendar-rules.mjs'
 import { sentencesOf, tidy, withoutLanguageNotes } from './intro-text.mjs'
 import { chunk, getJson } from './wikimedia.mjs'
 
@@ -95,7 +96,7 @@ function summaryOf(extract, biography) {
   for (const raw of extract.split('\n').map((line) => line.trim()).filter(Boolean)) {
     if (paragraphs.length === MAX_PARAGRAPHS) break
     const first = paragraphs.length === 0
-    const text = tidy(withoutLanguageNotes(raw))
+    const text = collapsePunctuation(tidy(withoutLanguageNotes(raw)))
     if (first && !(text === biography || text.startsWith(`${biography} `))) return null
     if (!isClean(text)) {
       if (first) return null

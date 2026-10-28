@@ -38,7 +38,7 @@ Corpo do 200:
   },
   "imageCredit": {
     "author": "(...)",
-    "license": "Public domain",
+    "license": "Domínio público",
     "url": "https://commons.wikimedia.org/wiki/File:(...)"
   },
   "calendar": {
@@ -71,7 +71,7 @@ Corpo do 200:
 
 `image` e `imageCredit` só aparecem quando há foto. `image` é sempre `https` e termina em `.jpg`, `.jpeg`, `.png` ou `.webp`.
 
-`summary` é a introdução do artigo da Wikipédia, em parágrafos: no máximo 3 e 1.200 caracteres somados, cortada no fim de uma frase. O primeiro parágrafo começa pela `biography`, que continua obrigatória. Parágrafo sem texto não aparece, e a lista some quando fica vazia. O dia com biografia escrita para a API (`02-29`) não tem `summary`.
+`summary` é a introdução do artigo da Wikipédia, em parágrafos: no máximo 3 e 1.200 caracteres somados, cortada no fim de uma frase. O primeiro parágrafo começa pela `biography`, que continua obrigatória. Parágrafo sem texto não aparece, e a lista some quando fica vazia. Dia com biografia escrita para a API (`tools/written-biographies.json`) não tem `summary`. Sem item da Wikidata, esse dia também sai sem `source`: ficam o título, a biografia e a linha `calendar`.
 
 Em `life` e `veneration`, campo sem texto não aparece, e o bloco inteiro some quando fica vazio. `veneration.feast` existe em todo dia do catálogo. `factsSource` nomeia o item da Wikidata de onde vêm as datas e os locais. `calendar` aparece quando o santo do dia é o da Canção Nova e aponta para a página dela.
 
@@ -96,6 +96,8 @@ tools/
   intro-text.mjs               frase e nota de idioma, a mesma regra para a biografia e a introdução
   wikimedia.mjs                pedido às APIs da Wikimedia, com pausa e nova tentativa
   written-biographies.json     frase escrita para esta API onde a Wikipédia não tem artigo
+  calendar-rules.mjs           título, crédito da foto, pontuação e o que conta como celebração móvel
+  fact-overrides.json          “Na arte”: recusa ou troca o texto da infobox quando ele não é símbolo
 .github/workflows/pages.yml    testa, exporta e publica no GitHub Pages a cada push na main
 ```
 
@@ -142,7 +144,7 @@ Os dois últimos rodam sobre o catálogo já commitado e não trocam santo de di
 | Qual santo em cada dia | Canção Nova, Santo do Dia: só o nome, o dia e a URL da página | — |
 | Dia sem Canção Nova | Wikidata, dia de festa (`P841`), só santo católico ou do Calendário Romano Geral | CC0 |
 | Biografia curta | Primeira frase do artigo na Wikipédia em português | CC BY-SA 4.0 |
-| Biografia de `02-29` | Frase escrita para esta API, em `tools/written-biographies.json` | Da API |
+| Biografia escrita | Frase própria em `tools/written-biographies.json`, a partir de fatos CC0 da Wikidata, quando não há artigo em português | Da API; a fonte nomeia o item quando ele existe |
 | Introdução (`summary`) | Introdução do mesmo artigo da biografia (`prop=extracts`, `exintro`, `explaintext`) | CC BY-SA 4.0 |
 | Foto | Wikimedia Commons, só domínio público, CC0, CC BY ou CC BY-SA | A do arquivo, gravada junto do dia |
 | Nascimento e morte | Wikidata: data (`P569`, `P570`) com a precisão gravada, “c.” quando marcada como aproximada, e local (`P19`, `P20`) | CC0 |
@@ -159,10 +161,14 @@ Na Wikidata vale a declaração preferida antes das normais, e a depreciada fica
 
 Santo da Canção Nova:
 
+- Vale a primeira entrada do dia que tiver artigo aceito. Sem artigo em nenhuma, vale a primeira, com a biografia escrita. Celebração móvel não fixa o dia: Sagrado Coração de Jesus, Imaculado Coração de Maria, Cristo Rei, Batismo do Senhor, Sagrada Família, Santíssima Trindade, Corpus Christi, Pentecostes, Ascensão e Páscoa. Só entra a entrada cujo nome começa por essa celebração.
 - O nome publicado lá é ligado ao artigo da Wikipédia em português e ao item da Wikidata. A busca tenta o nome, o nome sem "São", "Santa" ou "Beato", e por fim a busca da Wikipédia com o título inteiro.
-- O artigo só é aceito se tiver o primeiro nome e pelo menos 60% dos nomes do santo. Sendo pessoa, ela precisa ter status de santo ou beato na Wikidata, ou estar entre os santos da consulta abaixo.
-- Entre artigos aceitos, ganha o que tem a festa no mesmo dia na Wikidata. No dia com santo e festa do Senhor, o santo vem primeiro. No dia com dois santos ("Santos Timóteo e Tito"), a biografia é a do primeiro e o título é o da Canção Nova.
-- Nome que não é achado sozinho pode ser ligado à mão em `tools/cancaonova-titles.json`.
+- O artigo só é aceito se tiver o primeiro nome e pelo menos 60% dos nomes do santo. Pessoa precisa ter status de santo ou beato na Wikidata, ou festa (`P841`) nesse dia. Item que não é pessoa só entra se o tipo (`P31`) for religioso: título de Maria, festividade, episódio do Evangelho, dogma, solenidade, grupo, dupla, personagem bíblico, anjo ou arcanjo. Grupo, dupla ou personagem bíblico sem festa no dia precisa de título manual.
+- Entre artigos aceitos, ganha o que tem a festa no mesmo dia na Wikidata. O dia da Canção Nova prevalece sobre o mesmo item escolhido só pela Wikidata. No dia com dois santos, a biografia é a do primeiro e o título é o da Canção Nova.
+- Nome que não é achado sozinho, ou que a regra recusaria mesmo estando certo, fica em `tools/cancaonova-titles.json`: string é o artigo, e o título sai do nome da Canção Nova; objeto `{ article, title }` fixa os dois.
+- O título da Canção Nova perde o aposto depois de vírgula, dois-pontos, travessão ou verbo. "Papa" não fica entre o honorífico e o nome. "San" no começo vira "São". Celebração não ganha honorífico.
+- No crédito da foto, autor desconhecido em qualquer forma vira "Autor desconhecido", nome repetido sai, e o texto fica em até 80 caracteres. "Public domain" vira "Domínio público".
+- `tools/fact-overrides.json` troca ou recusa "Na arte" quando a infobox ainda traz o texto indicado em `if`. `null` tira a infobox e deixa o símbolo da Wikidata, se houver.
 
 Dia sem Canção Nova, ou com nome que não foi ligado:
 
