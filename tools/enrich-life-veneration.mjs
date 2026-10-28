@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { chunk, getJson } from './wikimedia.mjs'
 
 const CALENDAR = new URL('../src/Infrastructure.Data/Calendar/saints.json', import.meta.url)
+const OVERRIDES = new URL('./fact-overrides.json', import.meta.url)
 
 const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
 const SAINT_STATUS = new Set(['Q43115', 'Q3464126', 'Q123110154', 'Q18344276'])
@@ -43,6 +44,7 @@ const WIKIDATA_FACTS = {
 
 async function main() {
   const file = JSON.parse(readFileSync(CALENDAR, 'utf8'))
+  const overrides = JSON.parse(readFileSync(OVERRIDES, 'utf8'))
   const { ids, titles } = await readWikidataIds(file.days)
   const entities = await readEntities([...new Set(ids.values())])
   const labels = await readLabels([...new Set([...entities.values()].flatMap(referencedItems))])
@@ -53,7 +55,7 @@ async function main() {
   file.days = file.days.map((saint) => {
     const id = ids.get(saint.day)
     const claims = id ? entities.get(id) : null
-    const infobox = infoboxes.get(titles.get(saint.day)) ?? {}
+    const infobox = factOverride(infoboxes.get(titles.get(saint.day)) ?? {}, overrides[saint.day])
     const life = claims ? lifeOf(claims, labels) : null
     const veneration = venerationOf(claims ?? {}, labels, infobox, saint.day)
     if (life) withLife += 1
@@ -68,6 +70,13 @@ async function main() {
   const fields = [['life', 'burial'], ['life', 'order'], ['veneration', 'beatification'], ['veneration', 'canonizedBy'], ['veneration', 'attributes']]
   console.log(fields.map(([block, field]) => `${field}: ${count(block, field)}`).join('; '))
   if (droppedLabels.size > 0) console.log(`rótulos da Wikidata descartados: ${[...droppedLabels].join(' | ')}`)
+}
+
+function factOverride(infobox, override) {
+  if (!override || !Object.hasOwn(override, 'attributes')) return infobox
+  const current = infobox.attributes ?? ''
+  if (override.if && !current.includes(override.if)) return infobox
+  return { ...infobox, attributes: override.attributes }
 }
 
 function ordered(saint, life, veneration, factsSource) {

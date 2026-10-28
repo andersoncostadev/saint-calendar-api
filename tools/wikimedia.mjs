@@ -7,15 +7,19 @@ export async function getJson(url) {
   let status = 0
   for (let attempt = 0; attempt < 5; attempt += 1) {
     await sleep(PAUSE_MS)
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body,
-    })
-    if (response.ok) return response.json()
-    status = response.status
-    const retryAfter = Number(response.headers.get('retry-after'))
-    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 10000 * (attempt + 1))
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'User-Agent': USER_AGENT, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body,
+        signal: AbortSignal.timeout(60000),
+      })
+      if (response.ok) return response.json()
+      status = response.status
+    } catch (error) {
+      status = error.cause?.code ?? error.name ?? 'falha'
+    }
+    await sleep(10000 * (attempt + 1))
   }
   throw new Error(`${endpoint} respondeu ${status}`)
 }
