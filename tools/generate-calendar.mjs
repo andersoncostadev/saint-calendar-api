@@ -92,6 +92,7 @@ async function main() {
     .concat([...cancaoNova.values()])
     .map((item) => item.imageFile)
     .concat([...writtenEntities.values()].map(imageFileOf))
+    .concat(Object.values(written).map((item) => item.image))
     .filter(Boolean)
   const images = await readImageLicenses([...new Set(files)])
 
@@ -128,7 +129,7 @@ async function main() {
     const manual = written[key]
     if (!manual) continue
     const entity = manual.wikidata ? writtenEntities.get(manual.wikidata) : null
-    const imageFile = imageFileOf(entity)
+    const imageFile = manual.image ?? imageFileOf(entity)
     const photo = imageFile ? images.get(imageFile) ?? null : null
     const calendar = fixedCalendar(key, cancaoDays)
     days.push(entry(key, { title: manual.title, calendar }, collapsePunctuation(manual.biography), photo, writtenSource(manual, calendar)))
