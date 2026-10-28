@@ -171,6 +171,22 @@ public class SaintCalendarFileTests
         });
     }
 
+    [Fact]
+    public async Task October_28_shows_both_apostles()
+    {
+        var saint = Assert.IsType<SaintEntity>(await _repository.FindByDayAsync("10-28", CancellationToken.None));
+
+        Assert.Equal("São Simão e São Judas Tadeu", saint.Title);
+        Assert.Contains("Simão", saint.Biography);
+        Assert.Contains("Judas Tadeu", saint.Biography);
+        Assert.Null(saint.Summary);
+        Assert.Null(saint.Life);
+        Assert.Contains("Par_de_Ap", Uri.UnescapeDataString(saint.Image ?? string.Empty));
+        Assert.DoesNotContain("Ribera", saint.Image);
+        Assert.Equal("Rui Carita", saint.ImageCredit?.Author);
+        Assert.NotNull(saint.Calendar);
+    }
+
     [Theory]
     [InlineData("03-16")]
     [InlineData("05-04")]
